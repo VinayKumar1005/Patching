@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>patching</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f4f6fa;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 700px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+      padding: 36px 32px 32px 32px;
+    }
+    h2 {
+      margin-top: 0;
+      color: #234;
+    }
+    textarea {
+      width: 100%;
+      font-size: 16px;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #bbb;
+      margin-bottom: 18px;
+      resize: vertical;
+      min-height: 60px;
+      box-sizing: border-box;
+    }
+    ul {
+      background: #f8f8f8;
+      border-radius: 8px;
+      padding: 20px;
+      list-style: none;
+      margin: 0;
+    }
+    li {
+      padding: 6px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 16px;
+    }
+    li:last-child {
+      border-bottom: none;
+    }
+    @media (max-width: 800px) {
+      .container { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>patching</h2>
+    <p>Enter app names or shortcuts, separated by comma, semicolon, space, or newline. Any app containing the entered text will be shown (case-insensitive).</p>
+    <textarea id="matchInput" placeholder="e.g.\nCRM\nIMA\nQC"></textarea>
+    <div style="margin-bottom: 18px; margin-top: 18px;">
+      <input id="addAppInput" type="text" placeholder="Add new app name..." style="font-size: 16px; padding: 7px; border-radius: 6px; border: 1px solid #bbb; width: 70%; max-width: 350px;" />
+      <button id="addAppBtn" style="font-size: 16px; padding: 7px 18px; border-radius: 6px; border: none; background: #2d7ff9; color: #fff; margin-left: 10px; cursor: pointer;">Add</button>
+    </div>
+    <div style="display: flex; gap: 32px; margin-top: 30px; flex-wrap: wrap;">
+      <div style="flex:1; min-width:240px;">
+        <h3>Matched Applications</h3>
+        <ul id="appList"></ul>
+      </div>
+      <div style="flex:1; min-width:240px;">
+        <h3>Not Found in List</h3>
+        <ul id="notFoundList"></ul>
+      </div>
+    </div>
+  </div>
+  <script>
+    const defaultApps = [
+      "AQCB","ATI","BAM","BNK-BANKRUPTCY","CAMP","CASPER","CAWS","CCWF","CGT-WCS","CIPHER","CLT","CO-ACD","CPE-E2E","CPE-E2E-GOVP","CPRC","CRM","CSRM","CXG-AMQ","DMS-ISDN","FULFILLMENT","GMAN","HCL-EMBARQ-ONE","HTTP-ITRESERVATIONS","IHST","IMA-FOM","IMA-GUI","IMA-IA","IMA-IA-ECOM","IMA-IRTM","IMA-XML","IMC","JAADU-WSOE","LEXCIS","LTRS","MFTS","MGLN","MYBASE","NET","NETOA","NIL-NIBS","NIL-NIBS-ADAPTER","NUDL","OMIR","POP","POWERTAX","QCENTRAL","QCRUN","QCTWIX","QCVOICE","QCWORKFLOW","QHOME","QPARTNER","QPARTNER VIGNETTE PORTAL","QXG-BC3","QXGBC3","RMSC","RPSCONNECT","RPSCORE","SFAETL","SWL-SUBSCRIPT","TUR","TUT","VMSU","W3L-WEB-BILLING","WC-RLD","WRE",
+      "ADDRESSBROKER","CP","20L-CRYSTAL","CEMR-MTG","CORE","DTV-DTV","DEAP","DMSRPT","EFLOW","FTS","FTS-SOS","ISPF","LPWF","LIMS","PS","RTAS","AJL","WPC","QUARK","RMOD","WATSONKIT","USERADMIN","WADB","BSPD-WADB","NOTATIONS","CST"
+    ];
+    // Alias map: key is canonical app name, value is array of aliases (including common shortcuts and full names)
+    const appAliases = {
+      // Format: 'Full Name': ['Shortcut1', 'Shortcut2', ...], and vice versa
+      "WEBSPHERE PRODUCT CENTER": ["WPC"],
+      "WPC": ["WEBSPHERE PRODUCT CENTER"],
+      "QCENTRAL": ["QC"],
+      "QC": ["QCENTRAL"],
+      "CUSTOMER RELATIONSHIP MANAGEMENT": ["CRM"],
+      "CRM": ["CUSTOMER RELATIONSHIP MANAGEMENT"],
+      "QCTWIX": ["QCT"],
+      "QCT": ["QCTWIX"],
+      "QHOME": ["QH"],
+      "QH": ["QHOME"],
+      "PS": ["PRODUCT SERVICE"],
+      "PRODUCT SERVICE": ["PS"],
+      "CP": ["CREDIT POLICY"],
+      "CREDIT POLICY": ["CP"],
+      "ROUTING ADMINISTRATION SYSTEM": ["RTAS"],
+      "RTAS": ["ROUTING ADMINISTRATION SYSTEM"],
+      "IHST": ["INTERNET HOST SELECTION SERVICES"],
+      "INTERNET HOST SELECTION SERVICES": ["IHST"],
+      // Add more aliases as needed below:
+      // "FULL NAME": ["SHORTCUT1", "SHORTCUT2"],
+      // "SHORTCUT1": ["FULL NAME"],
+    };
+
+    let apps = [];
+    // Load from localStorage or use default
+    function loadApps() {
+      const saved = localStorage.getItem('patching_app_list');
+      if (saved) {
+        try {
+          apps = JSON.parse(saved);
+        } catch {
+          apps = [...defaultApps];
+        }
+      } else {
+        apps = [...defaultApps];
+      }
+    }
+    function saveApps() {
+      localStorage.setItem('patching_app_list', JSON.stringify(apps));
+    }
+    loadApps();
+
+    function getMatchScore(app, matchList) {
+      const lowerApp = app.toLowerCase();
+      for (let i = 0; i < matchList.length; i++) {
+        const match = matchList[i].toLowerCase();
+        if (lowerApp === match) return 3;
+        if (lowerApp.startsWith(match)) return 2;
+        if (lowerApp.includes(match)) return 1;
+      }
+      return 0;
+    }
+
+    function renderAppList(sorted) {
+      const ul = document.getElementById('appList');
+      ul.innerHTML = '';
+      sorted.forEach(app => {
+        const li = document.createElement('li');
+        li.style.display = 'flex';
+        li.style.justifyContent = 'space-between';
+        li.style.alignItems = 'center';
+        const span = document.createElement('span');
+        span.textContent = app;
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Remove';
+        delBtn.style.background = '#f44336';
+        delBtn.style.color = '#fff';
+        delBtn.style.border = 'none';
+        delBtn.style.borderRadius = '5px';
+        delBtn.style.padding = '3px 10px';
+        delBtn.style.fontSize = '14px';
+        delBtn.style.cursor = 'pointer';
+        delBtn.onclick = function() {
+          removeApp(app);
+        };
+        li.appendChild(span);
+        li.appendChild(delBtn);
+        ul.appendChild(li);
+      });
+    }
+
+    function renderNotFoundList(notFound) {
+      const ul = document.getElementById('notFoundList');
+      ul.innerHTML = '';
+      notFound.forEach(name => {
+        const li = document.createElement('li');
+        li.textContent = name;
+        ul.appendChild(li);
+      });
+    }
+
+    function filterApps(input) {
+      // Split by comma, semicolon, or newline ONLY (not spaces)
+      const matchList = input.split(/[;,\n]+/).map(s => s.trim()).filter(Boolean);
+      if (matchList.length === 0) {
+        renderAppList(apps);
+        renderNotFoundList([]);
+        return;
+      }
+      const matchListLower = matchList.map(s => s.toLowerCase());
+      // Find all apps that match any search term (with aliases)
+      const filtered = apps.filter(app => {
+        const appLower = app.toLowerCase();
+        // Collect all possible names for this app: itself + aliases
+        const namesToCheck = [appLower];
+        if (appAliases[app]) {
+          namesToCheck.push(...appAliases[app].map(a => a.toLowerCase()));
+        }
+        // Also check if this app is an alias for another app
+        Object.entries(appAliases).forEach(([main, aliases]) => {
+          if (aliases.map(a => a.toLowerCase()).includes(appLower)) {
+            namesToCheck.push(main.toLowerCase());
+            namesToCheck.push(...aliases.map(a => a.toLowerCase()));
+          }
+        });
+        // Match if any name/alias contains any match string
+        return matchListLower.some(match =>
+          namesToCheck.some(name => name.includes(match))
+        );
+      });
+      // Find not founds: input tokens that do not match any app or alias
+      const allNamesAndAliases = [
+        ...apps.map(a => a.toLowerCase()),
+        ...Object.entries(appAliases).flatMap(([main, aliases]) => [main.toLowerCase(), ...aliases.map(a => a.toLowerCase())])
+      ];
+      const notFound = matchList.filter(orig => {
+        const match = orig.toLowerCase();
+        return !allNamesAndAliases.some(name => name.includes(match));
+      });
+      renderAppList(filtered);
+      renderNotFoundList(notFound);
+    }
+
+    function addApp(appName) {
+      const trimmed = appName.trim();
+      if (!trimmed) return;
+      if (apps.includes(trimmed)) {
+        alert('App already exists!');
+        return;
+      }
+      apps.push(trimmed);
+      saveApps();
+      document.getElementById('addAppInput').value = '';
+      filterApps(document.getElementById('matchInput').value);
+    }
+
+    function removeApp(appName) {
+      const idx = apps.indexOf(appName);
+      if (idx !== -1) {
+        apps.splice(idx, 1);
+        saveApps();
+        filterApps(document.getElementById('matchInput').value);
+      }
+    }
+
+    document.getElementById('matchInput').addEventListener('input', function(e) {
+      filterApps(e.target.value);
+    });
+
+    document.getElementById('addAppBtn').addEventListener('click', function() {
+      addApp(document.getElementById('addAppInput').value);
+    });
+    document.getElementById('addAppInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addApp(document.getElementById('addAppInput').value);
+      }
+    });
+
+    // Initial render
+    renderAppList(apps);
+  </script>
+</body>
+</html>
